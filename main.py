@@ -14,7 +14,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Robô Didático XAU/USD rodando!"
+    return "Robô Didático XAU/USD Spot rodando!"
 
 TELEGRAM_TOKEN = "8632537313:AAFjidCR7O7t0ofdoCjvpMJi017gQmTN_8U"
 CHAT_ID = "1276043677"
@@ -31,19 +31,20 @@ def enviar_foto_telegram(caminho_foto, legenda):
 
 def gerar_grafico_e_analisar():
     try:
-        dados = yf.download(tickers="GC=F", period="2d", interval="15m", progress=False)
+        # Usa XAUUSD=X para pegar o preço Spot idêntico ao MetaTrader
+        dados = yf.download(tickers="XAUUSD=X", period="2d", interval="15m", progress=False)
         
         if dados.empty or len(dados) < 30:
+            print("Aguardando dados da API...")
             return
 
-        # Ajusta estrutura dos dados do yfinance
         if isinstance(dados.columns, pd.MultiIndex):
             df = pd.DataFrame({
-                'Open': dados['Open']['GC=F'],
-                'High': dados['High']['GC=F'],
-                'Low': dados['Low']['GC=F'],
-                'Close': dados['Close']['GC=F'],
-                'Volume': dados['Volume']['GC=F']
+                'Open': dados['Open']['XAUUSD=X'],
+                'High': dados['High']['XAUUSD=X'],
+                'Low': dados['Low']['XAUUSD=X'],
+                'Close': dados['Close']['XAUUSD=X'],
+                'Volume': dados['Volume']['XAUUSD=X']
             })
         else:
             df = dados[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
@@ -62,9 +63,9 @@ def gerar_grafico_e_analisar():
             tp = preco_atual + 7.00
             explicacao = (
                 "🎓 *AULA DO PROFESSOR: CANDLES DE ALTA*\n\n"
-                "1️⃣ *Análise dos Candles:* As velas verdes mostram pressão dos compradores empurrando o preço para cima.\n"
-                "2️⃣ *Gatilho de Entrada:* Comprar próximo ao preço atual com foco no movimento do M15.\n"
-                "3️⃣ *Proteção:* Stop Loss na linha vermelha para conter perdas e Take Profit na linha verde."
+                "1️⃣ *Análise dos Candles:* As velas verdes mostram força compradora.\n"
+                "2️⃣ *Gatilho de Entrada:* Comprar próximo ao preço atual com alvo na alta.\n"
+                "3️⃣ *Proteção:* Stop Loss na linha vermelha e Take Profit na verde."
             )
         elif preco_atual < media_rapida and media_rapida < media_lenta:
             sinal = "🔴 VENDA"
@@ -72,9 +73,9 @@ def gerar_grafico_e_analisar():
             tp = preco_atual - 7.00
             explicacao = (
                 "🎓 *AULA DO PROFESSOR: CANDLES DE BAIXA*\n\n"
-                "1️⃣ *Análise dos Candles:* As velas vermelhas mostram a força vendedora dominando as últimas barras.\n"
-                "2️⃣ *Gatilho de Entrada:* Oportunidade de venda a favor da tendência imediata.\n"
-                "3️⃣ *Proteção:* Stop Loss posicionado acima da resistência e Take Profit no alvo abaixo."
+                "1️⃣ *Análise dos Candles:* Velas vermelhas indicam pressão vendedora.\n"
+                "2️⃣ *Gatilho de Entrada:* Venda a favor da tendência imediata.\n"
+                "3️⃣ *Proteção:* Stop Loss posicionado acima da resistência."
             )
         else:
             sinal = "⚪ NEUTRO (AGUARDAR)"
@@ -82,11 +83,10 @@ def gerar_grafico_e_analisar():
             tp = preco_atual
             explicacao = (
                 "🎓 *AULA DO PROFESSOR: MERCADO EM CONSOLIDAÇÃO*\n\n"
-                "1️⃣ *Análise dos Candles:* As velas estão alternando entre verde e vermelho sem sair do lugar.\n"
-                "2️⃣ *Recomendação:* Aguarde um candle de força (corpo grande) romper o Suporte ou a Resistência."
+                "1️⃣ *Análise dos Candles:* Velas alternando sem direção definida.\n"
+                "2️⃣ *Recomendação:* Aguarde o rompimento do Suporte ou Resistência."
             )
 
-        # Configuração do Estilo de Candlesticks Profissional
         mc = mpf.make_marketcolors(
             up='#00b050', down='#ff0000',
             edge='inherit', wick='inherit',
@@ -94,8 +94,6 @@ def gerar_grafico_e_analisar():
         )
         s = mpf.make_mpf_style(base_mpf_style='nightclouds', marketcolors=mc)
 
-        # Adiciona as linhas horizontais de entrada, SL e TP
-        linhas_h = []
         if sinal != "⚪ NEUTRO (AGUARDAR)":
             linhas_h = [preco_atual, tp, sl]
             cores_linhas = ['yellow', 'green', 'red']
@@ -105,12 +103,11 @@ def gerar_grafico_e_analisar():
 
         caminho_imagem = "grafico_candles.png"
         
-        # Desenha o gráfico de velas
         fig, axlist = mpf.plot(
             df_recorte,
             type='candle',
             style=s,
-            title=f"XAU/USD (M15) - {sinal}",
+            title=f"XAU/USD SPOT (M15) - {sinal}",
             hlines=dict(hlines=linhas_h, colors=cores_linhas, linestyle='--'),
             figsize=(10, 6),
             returnfig=True
@@ -120,7 +117,7 @@ def gerar_grafico_e_analisar():
         plt.close(fig)
 
         legenda_telegram = (
-            f"📊 *ANÁLISE DE CANDLES - XAU/USD (M15)*\n\n"
+            f"📊 *ANÁLISE DE CANDLES - XAU/USD SPOT (M15)*\n\n"
             f"💰 *Preço Atual:* ${preco_atual:.2f}\n"
             f"🎯 *Decisão:* {sinal}\n\n"
             f"{explicacao}"
