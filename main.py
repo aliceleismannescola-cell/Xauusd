@@ -25,12 +25,14 @@ def enviar_foto_telegram(caminho_foto, legenda):
         with open(caminho_foto, 'rb') as foto:
             payload = {'chat_id': CHAT_ID, 'caption': legenda, 'parse_mode': 'Markdown'}
             files = {'photo': foto}
-            requests.post(url, data=payload, files=files, timeout=25)
+            res = requests.post(url, data=payload, files=files, timeout=25)
+            print("Resposta do Telegram:", res.status_code)
     except Exception as e:
         print(f"Erro ao enviar foto: {e}")
 
 def gerar_grafico_e_analisar():
     try:
+        print("Buscando dados e gerando gráfico...")
         url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=2d"
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=15)
@@ -116,7 +118,6 @@ def gerar_grafico_e_analisar():
                 "💡 *Dica do Professor:* Paciência é uma virtude no trading! Não force operações dentro da consolidação. Espere uma vela de 15 minutos FECHAR fora dessa zona para confirmar o rompimento."
             )
 
-        # Visualização Gráfica Avançada com mplfinance
         mc = mpf.make_marketcolors(
             up='#00e676', down='#ff5252',
             edge='inherit', wick='inherit',
@@ -129,13 +130,11 @@ def gerar_grafico_e_analisar():
             gridcolor='#333333'
         )
 
-        # Plot das Médias Móveis no Gráfico
         add_plots = [
-            mpf.makeaddplot(df_recorte['EMA9'], color='#00b0ff', width=1.5),  # EMA 9 Azul
-            mpf.makeaddplot(df_recorte['EMA21'], color='#ffd600', width=1.5)  # EMA 21 Amarela
+            mpf.makeaddplot(df_recorte['EMA9'], color='#00b0ff', width=1.5),
+            mpf.makeaddplot(df_recorte['EMA21'], color='#ffd600', width=1.5)
         ]
 
-        # Linhas de Nivéis
         if "COMPRA" in sinal or "VENDA" in sinal:
             linhas_h = [preco_atual, tp, sl]
             cores_linhas = ['#ffea00', '#00e676', '#ff1744']
@@ -156,13 +155,11 @@ def gerar_grafico_e_analisar():
             returnfig=True
         )
 
-        # Adiciona legenda das Médias e marcações no gráfico
         ax = axlist[0]
         ax.text(0.02, 0.93, "— EMA 9 (Média Rápida - Azul)\n— EMA 21 (Média Lenta - Amarela)", 
                 transform=ax.transAxes, color='white', fontsize=9, 
                 bbox=dict(boxstyle='round,pad=0.4', facecolor='#1e1e1e', alpha=0.8, edgecolor='#555555'))
 
-        # Marca o preço atual na tela
         ax.annotate(f'Preço: ${preco_atual:.2f}', 
                     xy=(len(df_recorte)-1, preco_atual), 
                     xytext=(len(df_recorte)-8, preco_atual + 1.5),
@@ -189,9 +186,12 @@ def gerar_grafico_e_analisar():
         print(f"Erro na análise avançada: {e}")
 
 def loop_monitoramento():
+    # Envia IMEDIATAMENTE a primeira mensagem ao ligar
+    gerar_grafico_e_analisar()
+    
     while True:
-        gerar_grafico_e_analisar()
         time.sleep(900)
+        gerar_grafico_e_analisar()
 
 if __name__ == "__main__":
     t = threading.Thread(target=loop_monitoramento)
