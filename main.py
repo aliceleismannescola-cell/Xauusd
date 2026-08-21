@@ -2,8 +2,8 @@ import os
 import requests
 import pandas as pd
 import numpy as np
+import yfinance as yf
 from flask import Flask, request
-from tvdatafeed import TvDatafeed, Interval
 
 app = Flask(__name__)
 
@@ -12,22 +12,17 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "SEU_TOKEN_AQUI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "SEU_CHAT_ID_AQUI")
 
 def obter_dados_xauusd():
-    """Busca os dados do Ouro Spot (XAUUSD) via OANDA no TradingView para alinhar com a Exness"""
+    """Busca os dados do Ouro Spot (XAUUSD=X) via yfinance"""
     try:
-        tv = TvDatafeed()
-        # Busca os últimos 100 candles de M15 do XAUUSD na OANDA
-        df = tv.get_hist(symbol='XAUUSD', exchange='OANDA', interval=Interval.in_15_minute, n_bars=100)
+        # XAUUSD=X representa o preço spot do Ouro em Dólares
+        ticker = yf.Ticker("XAUUSD=X")
+        df = ticker.history(period="5d", interval="15m")
         
         if df is None or df.empty:
             return None
         
-        df = df.rename(columns={
-            'open': 'Open',
-            'high': 'High',
-            'low': 'Low',
-            'close': 'Close',
-            'volume': 'Volume'
-        })
+        # Padronização de colunas
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
         return df
     except Exception as e:
         print(f"Erro ao buscar dados do Spot Gold: {e}")
@@ -43,7 +38,7 @@ def calcular_rsi(df, period=14):
     return df
 
 def calcular_indicadores(df):
-    """Calcula as Médias Móveis EmA 9 e EMA 21"""
+    """Calcula as Médias Móveis EMA 9 e EMA 21"""
     df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df = calcular_rsi(df)
@@ -74,7 +69,6 @@ def executar_analise_e_envio():
     
     # Dados da última vela fechada
     atual = df.iloc[-1]
-    anterior = df.iloc[-2]
     
     preco = round(atual['Close'], 2)
     rsi = round(atual['RSI'], 2)
@@ -113,7 +107,7 @@ def executar_analise_e_envio():
         mensagem = (
             f"🎯 *SINAL CONFIRMADO - XAU/USD (M15)*\n\n"
             f"📍 *Ação:* {sinal}\n"
-            f"💰 *Preço Atual (Exness/Spot):* ${preco}\n"
+            f"💰 *Preço Spot:* ${preco}\n"
             f"📊 *RSI (14):* {rsi}\n\n"
             f"🛑 *Stop Loss:* ${sl}\n"
             f"🎯 *Take Profit:* ${tp}\n\n"
