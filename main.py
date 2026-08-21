@@ -13,7 +13,7 @@ from flask import Flask
 app = Flask(__name__)
 
 TELEGRAM_TOKEN = "8632537313:AAFjidCR7O7t0ofdoCjvpMJi017gQmTN_8U"
-CHAT_ID = "1276043677"
+CHAT_ID = "@xaubotMTE"
 
 @app.route('/')
 def home():
