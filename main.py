@@ -66,9 +66,11 @@ def executar_analise_e_envio():
 
     mc = mpf.make_marketcolors(up='#00e676', down='#ff5252', edge='inherit', wick='inherit', volume='in')
     s = mpf.make_mpf_style(base_mpf_style='nightclouds', marketcolors=mc, gridstyle=':', gridcolor='#333333')
+    
+    # Correção do nome da função abaixo (make_addplot)
     add_plots = [
-        mpf.makeaddplot(df_recorte['EMA9'], color='#00b0ff', width=1.5),
-        mpf.makeaddplot(df_recorte['EMA21'], color='#ffd600', width=1.5)
+        mpf.make_addplot(df_recorte['EMA9'], color='#00b0ff', width=1.5),
+        mpf.make_addplot(df_recorte['EMA21'], color='#ffd600', width=1.5)
     ]
 
     linhas_h = [preco_atual, preco_atual+7, preco_atual-3.5] if "COMPRA" in sinal or "VENDA" in sinal else [resistencia, suporte]
