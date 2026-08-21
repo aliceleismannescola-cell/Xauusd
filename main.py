@@ -15,12 +15,16 @@ app = Flask(__name__)
 TELEGRAM_TOKEN = "8632537313:AAFjidCR7O7t0ofdoCjvpMJi017gQmTN_8U"
 CHAT_ID = "1276043677"
 
+# Variável para armazenar o último sinal enviado e evitar spam
+ultimo_sinal_enviado = None
+
 @app.route('/')
 def home():
-    return "Robô Didático XAU/USD Spot rodando! Acesse /enviar para disparar a análise."
+    return "Robô Didático XAU/USD Spot rodando! Monitorando o mercado minuto a minuto."
 
-def executar_analise_e_envio():
-    # Buscar mais histórico (5 dias) para garantir candles suficientes
+def executar_analise_e_envio(forcar_envio=False):
+    global ultimo_sinal_enviado
+
     url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     res = requests.get(url, headers=headers, timeout=15)
@@ -37,14 +41,12 @@ def executar_analise_e_envio():
         'Volume': quote['volume']
     }, index=pd.to_datetime(timestamps, unit='s')).dropna()
     
-    # Ajuste para aproximar do Ouro Spot (XAUUSD)
     offset_spot = 57.0 
     df['Open'] -= offset_spot
     df['High'] -= offset_spot
     df['Low'] -= offset_spot
     df['Close'] -= offset_spot
 
-    # Pegar os últimos 45 candles para um gráfico proporcional e bonito
     df_recorte = df.tail(45).copy()
     df_recorte['EMA9'] = df_recorte['Close'].ewm(span=9, adjust=False).mean()
     df_recorte['EMA21'] = df_recorte['Close'].ewm(span=21, adjust=False).mean()
@@ -55,37 +57,43 @@ def executar_analise_e_envio():
     resistencia = float(df_recorte['High'].tail(25).max())
     suporte = float(df_recorte['Low'].tail(25).min())
 
+    # Determinar sinal
     if preco_atual > ema9_atual and ema9_atual > ema21_atual:
         sinal = "🟢 COMPRA (ALTA)"
         sl, tp = preco_atual - 3.50, preco_atual + 7.00
         explicacao = (
-            f"🎓 *ANÁLISE DE ALTA (TENDÊNCIA MAJORITÁRIA)*\n\n"
+            f"🎓 *OPORTUNIDADE DE COMPRA DECTETADA*\n\n"
             f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
             f"🎯 *Take Profit (TP):* ${tp:.2f} (+7.00)\n"
             f"🛡️ *Stop Loss (SL):* ${sl:.2f} (-3.50)\n\n"
-            f"💡 *Motivo:* As médias móveis (MME9 e MME21) estão em alinhamento de alta."
+            f"💡 *Análise:* Estrutura de alta confirmada (EMA9 > EMA21)."
         )
     elif preco_atual < ema9_atual and ema9_atual < ema21_atual:
         sinal = "🔴 VENDA (BAIXA)"
         sl, tp = preco_atual + 3.50, preco_atual - 7.00
         explicacao = (
-            f"🎓 *ANÁLISE DE BAIXA (TENDÊNCIA MAJORITÁRIA)*\n\n"
+            f"🎓 *OPORTUNIDADE DE VENDA DETECTADA*\n\n"
             f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
             f"🎯 *Take Profit (TP):* ${tp:.2f} (-7.00)\n"
             f"🛡️ *Stop Loss (SL):* ${sl:.2f} (+3.50)\n\n"
-            f"💡 *Motivo:* MME9 cruzou abaixo da MME21, indicando força vendedora."
+            f"💡 *Análise:* Estrutura de baixa confirmada (EMA9 < EMA21)."
         )
     else:
         sinal = "⚪ NEUTRO (CONSOLIDAÇÃO)"
         explicacao = (
-            f"🎓 *ANÁLISE DE LATERALIZAÇÃO*\n\n"
+            f"🎓 *MERCADO EM CONSOLIDAÇÃO*\n\n"
             f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
             f"🔴 *Resistência:* ${resistencia:.2f}\n"
             f"🟢 *Suporte:* ${suporte:.2f}\n\n"
-            f"💡 *Motivo:* O preço está operando entre as médias sem direção clara."
+            f"💡 *Análise:* O preço está lateralizado. Aguardando definição de tendência."
         )
 
-    # Estilo customizado inspirado no TradingView / Dark Theme
+    # Se não for forçado e o sinal for igual ao último enviado, não reenvia para evitar spam
+    if not forcar_envio and sinal == ultimo_sinal_enviado:
+        return "Nenhuma mudança de sinal. Aguardando nova oportunidade."
+
+    ultimo_sinal_enviado = sinal
+
     mc = mpf.make_marketcolors(
         up='#00e676', down='#ff5252',
         edge={'up': '#00e676', 'down': '#ff5252'},
@@ -127,7 +135,6 @@ def executar_analise_e_envio():
         returnfig=True
     )
 
-    # Ajustes finais no título e layout
     axes[0].set_ylabel('Preço (USD)', color='#8b949e', fontsize=9)
     axes[0].tick_params(colors='#8b949e')
     
@@ -153,19 +160,20 @@ def executar_analise_e_envio():
 @app.route('/enviar')
 def enviar_manual():
     try:
-        resposta = executar_analise_e_envio()
+        resposta = executar_analise_e_envio(forcar_envio=True)
         return f"<h1>Resultado do Envio:</h1><pre>{resposta}</pre>"
     except Exception as e:
         return f"<h1>Erro ao Executar:</h1><pre>{str(e)}</pre>"
 
 def loop_monitoramento():
-    time.sleep(10)
+    time.sleep(5)
     while True:
         try:
-            executar_analise_e_envio()
+            executar_analise_e_envio(forcar_envio=False)
         except Exception as e:
             print(f"Erro no loop automático: {e}")
-        time.sleep(900)
+        # Checa a cada 60 segundos (1 minuto)
+        time.sleep(60)
 
 if __name__ == "__main__":
     t = threading.Thread(target=loop_monitoramento)
