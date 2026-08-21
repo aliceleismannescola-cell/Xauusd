@@ -19,6 +19,13 @@ CHAT_ID = "1276043677"
 def home():
     return "Robô Didático XAU/USD Spot rodando! Monitorando mercado continuamente."
 
+def calcular_rsi(data, window=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
 def executar_analise_e_envio():
     print("-> Iniciando análise de mercado XAU/USD...")
     
@@ -44,47 +51,71 @@ def executar_analise_e_envio():
     df['Low'] -= offset_spot
     df['Close'] -= offset_spot
 
-    df_recorte = df.tail(45).copy()
+    df_recorte = df.tail(60).copy()
     df_recorte['EMA9'] = df_recorte['Close'].ewm(span=9, adjust=False).mean()
     df_recorte['EMA21'] = df_recorte['Close'].ewm(span=21, adjust=False).mean()
+    df_recorte['RSI'] = calcular_rsi(df_recorte['Close'], window=14)
 
     preco_atual = float(df_recorte['Close'].iloc[-1])
     ema9_atual = float(df_recorte['EMA9'].iloc[-1])
     ema21_atual = float(df_recorte['EMA21'].iloc[-1])
+    rsi_atual = float(df_recorte['RSI'].iloc[-1])
     resistencia = float(df_recorte['High'].tail(25).max())
     suporte = float(df_recorte['Low'].tail(25).min())
 
+    # Lógica de decisão reforçada com filtro de IFR (RSI)
     if preco_atual > ema9_atual and ema9_atual > ema21_atual:
-        sinal = "🟢 COMPRA (ALTA)"
-        sl, tp = preco_atual - 3.50, preco_atual + 7.00
-        explicacao = (
-            f"🎓 *ANÁLISE DE TENDÊNCIA: ALTA*\n\n"
-            f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-            f"🎯 *Take Profit (TP):* ${tp:.2f} (+7.00)\n"
-            f"🛡️ *Stop Loss (SL):* ${sl:.2f} (-3.50)\n\n"
-            f"💡 *Leitura:* MME9 e MME21 alinhadas para compra."
-        )
+        if rsi_atual > 70:
+            sinal = "⚪ NEUTRO (SOBRECOMPRADO)"
+            explicacao = (
+                f"🎓 *ALERTA DE TOPO / SOBRECOMPRA*\n\n"
+                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+                f"⚠️ *IFR (RSI):* {rsi_atual:.1f} (Acima de 70)\n\n"
+                f"💡 *Leitura:* As médias indicam alta, mas o preço está esticado. Risco de correção imediata! Entrada bloqueada."
+            )
+        else:
+            sinal = "🟢 COMPRA (ALTA)"
+            sl, tp = preco_atual - 3.50, preco_atual + 7.00
+            explicacao = (
+                f"🎓 *ANÁLISE DE TENDÊNCIA: ALTA*\n\n"
+                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+                f"🎯 *Take Profit (TP):* ${tp:.2f} (+7.00)\n"
+                f"🛡️ *Stop Loss (SL):* ${sl:.2f} (-3.50)\n"
+                f"📊 *IFR (RSI):* {rsi_atual:.1f}\n\n"
+                f"💡 *Leitura:* MME9 e MME21 alinhadas com espaço para subir."
+            )
     elif preco_atual < ema9_atual and ema9_atual < ema21_atual:
-        sinal = "🔴 VENDA (BAIXA)"
-        sl, tp = preco_atual + 3.50, preco_atual - 7.00
-        explicacao = (
-            f"🎓 *ANÁLISE DE TENDÊNCIA: BAIXA*\n\n"
-            f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-            f"🎯 *Take Profit (TP):* ${tp:.2f} (-7.00)\n"
-            f"🛡️ *Stop Loss (SL):* ${sl:.2f} (+3.50)\n\n"
-            f"💡 *Leitura:* MME9 e MME21 alinhadas para venda."
-        )
+        if rsi_atual < 30:
+            sinal = "⚪ NEUTRO (SOBREVENDIDO)"
+            explicacao = (
+                f"🎓 *ALERTA DE FUNDO / SOBREVENDA*\n\n"
+                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+                f"⚠️ *IFR (RSI):* {rsi_atual:.1f} (Abaixo de 30)\n\n"
+                f"💡 *Leitura:* Tendência de baixa, mas o preço já caiu demais. Risco de repique de alta! Entrada bloqueada."
+            )
+        else:
+            sinal = "🔴 VENDA (BAIXA)"
+            sl, tp = preco_atual + 3.50, preco_atual - 7.00
+            explicacao = (
+                f"🎓 *ANÁLISE DE TENDÊNCIA: BAIXA*\n\n"
+                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+                f"🎯 *Take Profit (TP):* ${tp:.2f} (-7.00)\n"
+                f"🛡️ *Stop Loss (SL):* ${sl:.2f} (+3.50)\n"
+                f"📊 *IFR (RSI):* {rsi_atual:.1f}\n\n"
+                f"💡 *Leitura:* MME9 e MME21 alinhadas com espaço para cair."
+            )
     else:
         sinal = "⚪ NEUTRO (CONSOLIDAÇÃO)"
         explicacao = (
             f"🎓 *ANÁLISE DE LATERALIZAÇÃO*\n\n"
             f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
             f"🔴 *Resistência:* ${resistencia:.2f}\n"
-            f"🟢 *Suporte:* ${suporte:.2f}\n\n"
-            f"💡 *Leitura:* Mercado em acumulação sem tendência definida."
+            f"🟢 *Suporte:* ${suporte:.2f}\n"
+            f"📊 *IFR (RSI):* {rsi_atual:.1f}\n\n"
+            f"💡 *Leitura:* Mercado sem tendência clara no momento."
         )
 
-    # Estilo Dark personalizado sem base predefinida
+    # Visual Dark Mode
     mc = mpf.make_marketcolors(
         up='#00e676', down='#ff5252',
         edge={'up': '#00e676', 'down': '#ff5252'},
@@ -103,17 +134,18 @@ def executar_analise_e_envio():
     )
 
     add_plots = [
-        mpf.make_addplot(df_recorte['EMA9'], color='#00b0ff', width=1.8),
-        mpf.make_addplot(df_recorte['EMA21'], color='#ffd600', width=1.8)
+        mpf.make_addplot(df_recorte['EMA9'].tail(45), color='#00b0ff', width=1.8),
+        mpf.make_addplot(df_recorte['EMA21'].tail(45), color='#ffd600', width=1.8)
     ]
 
+    df_plot = df_recorte.tail(45)
     linhas_h = [preco_atual, preco_atual+7.0, preco_atual-3.5] if "COMPRA" in sinal or "VENDA" in sinal else [resistencia, suporte]
     cores_linhas = ['#ffd600', '#00e676', '#ff5252'] if "COMPRA" in sinal or "VENDA" in sinal else ['#ff9100', '#00e676']
 
     caminho_imagem = "grafico_aula.png"
     
     fig, axes = mpf.plot(
-        df_recorte,
+        df_plot,
         type='candle',
         style=style_custom,
         addplot=add_plots,
