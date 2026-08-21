@@ -17,10 +17,11 @@ CHAT_ID = "1276043677"
 
 @app.route('/')
 def home():
-    return "Robô Didático XAU/USD Spot rodando! Acesse /enviar para testar e ver o resultado na tela."
+    return "Robô Didático XAU/USD Spot rodando! Acesse /enviar para disparar a análise."
 
 def executar_analise_e_envio():
-    url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=2d"
+    # Buscar mais histórico (5 dias) para garantir candles suficientes
+    url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     res = requests.get(url, headers=headers, timeout=15)
     json_data = res.json()
@@ -36,57 +37,109 @@ def executar_analise_e_envio():
         'Volume': quote['volume']
     }, index=pd.to_datetime(timestamps, unit='s')).dropna()
     
+    # Ajuste para aproximar do Ouro Spot (XAUUSD)
     offset_spot = 57.0 
     df['Open'] -= offset_spot
     df['High'] -= offset_spot
     df['Low'] -= offset_spot
     df['Close'] -= offset_spot
 
-    df_recorte = df.tail(35).copy()
+    # Pegar os últimos 45 candles para um gráfico proporcional e bonito
+    df_recorte = df.tail(45).copy()
     df_recorte['EMA9'] = df_recorte['Close'].ewm(span=9, adjust=False).mean()
     df_recorte['EMA21'] = df_recorte['Close'].ewm(span=21, adjust=False).mean()
 
     preco_atual = float(df_recorte['Close'].iloc[-1])
     ema9_atual = float(df_recorte['EMA9'].iloc[-1])
     ema21_atual = float(df_recorte['EMA21'].iloc[-1])
-    resistencia = float(df_recorte['High'].tail(20).max())
-    suporte = float(df_recorte['Low'].tail(20).min())
+    resistencia = float(df_recorte['High'].tail(25).max())
+    suporte = float(df_recorte['Low'].tail(25).min())
 
     if preco_atual > ema9_atual and ema9_atual > ema21_atual:
         sinal = "🟢 COMPRA (ALTA)"
         sl, tp = preco_atual - 3.50, preco_atual + 7.00
-        explicacao = f"🎓 *AULA COMPLETA: TENDÊNCIA DE ALTA*\n\n📌 *1. Entrada:* ${preco_atual:.2f}\n📌 *2. Take Profit:* ${tp:.2f}\n📌 *3. Stop Loss:* ${sl:.2f}"
+        explicacao = (
+            f"🎓 *ANÁLISE DE ALTA (TENDÊNCIA MAJORITÁRIA)*\n\n"
+            f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+            f"🎯 *Take Profit (TP):* ${tp:.2f} (+7.00)\n"
+            f"🛡️ *Stop Loss (SL):* ${sl:.2f} (-3.50)\n\n"
+            f"💡 *Motivo:* As médias móveis (MME9 e MME21) estão em alinhamento de alta."
+        )
     elif preco_atual < ema9_atual and ema9_atual < ema21_atual:
         sinal = "🔴 VENDA (BAIXA)"
         sl, tp = preco_atual + 3.50, preco_atual - 7.00
-        explicacao = f"🎓 *AULA COMPLETA: TENDÊNCIA DE BAIXA*\n\n📌 *1. Entrada:* ${preco_atual:.2f}\n📌 *2. Take Profit:* ${tp:.2f}\n📌 *3. Stop Loss:* ${sl:.2f}"
+        explicacao = (
+            f"🎓 *ANÁLISE DE BAIXA (TENDÊNCIA MAJORITÁRIA)*\n\n"
+            f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+            f"🎯 *Take Profit (TP):* ${tp:.2f} (-7.00)\n"
+            f"🛡️ *Stop Loss (SL):* ${sl:.2f} (+3.50)\n\n"
+            f"💡 *Motivo:* MME9 cruzou abaixo da MME21, indicando força vendedora."
+        )
     else:
         sinal = "⚪ NEUTRO (CONSOLIDAÇÃO)"
-        explicacao = f"🎓 *AULA COMPLETA: LATERALIZAÇÃO*\n\n📌 *Resistência:* ${resistencia:.2f}\n📌 *Suporte:* ${suporte:.2f}"
+        explicacao = (
+            f"🎓 *ANÁLISE DE LATERALIZAÇÃO*\n\n"
+            f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+            f"🔴 *Resistência:* ${resistencia:.2f}\n"
+            f"🟢 *Suporte:* ${suporte:.2f}\n\n"
+            f"💡 *Motivo:* O preço está operando entre as médias sem direção clara."
+        )
 
-    mc = mpf.make_marketcolors(up='#00e676', down='#ff5252', edge='inherit', wick='inherit', volume='in')
-    s = mpf.make_mpf_style(base_mpf_style='nightclouds', marketcolors=mc, gridstyle=':', gridcolor='#333333')
+    # Estilo customizado inspirado no TradingView / Dark Theme
+    mc = mpf.make_marketcolors(
+        up='#00e676', down='#ff5252',
+        edge={'up': '#00e676', 'down': '#ff5252'},
+        wick={'up': '#00e676', 'down': '#ff5252'},
+        volume='in'
+    )
     
-    # Correção do nome da função abaixo (make_addplot)
+    style_custom = mpf.make_mpf_style(
+        base_mpf_style='charcoal',
+        marketcolors=mc,
+        facecolor='#121824',
+        edgecolor='#1f293d',
+        figcolor='#0d1117',
+        gridcolor='#1f293d',
+        gridstyle='--',
+        rc={'font.family': 'sans-serif', 'font.size': 9}
+    )
+
     add_plots = [
-        mpf.make_addplot(df_recorte['EMA9'], color='#00b0ff', width=1.5),
-        mpf.make_addplot(df_recorte['EMA21'], color='#ffd600', width=1.5)
+        mpf.make_addplot(df_recorte['EMA9'], color='#00b0ff', width=1.8),
+        mpf.make_addplot(df_recorte['EMA21'], color='#ffd600', width=1.8)
     ]
 
-    linhas_h = [preco_atual, preco_atual+7, preco_atual-3.5] if "COMPRA" in sinal or "VENDA" in sinal else [resistencia, suporte]
-    cores_linhas = ['#ffea00', '#00e676', '#ff1744'] if "COMPRA" in sinal or "VENDA" in sinal else ['#ff9100', '#e040fb']
+    linhas_h = [preco_atual, preco_atual+7.0, preco_atual-3.5] if "COMPRA" in sinal or "VENDA" in sinal else [resistencia, suporte]
+    cores_linhas = ['#ffd600', '#00e676', '#ff5252'] if "COMPRA" in sinal or "VENDA" in sinal else ['#ff9100', '#00e676']
 
     caminho_imagem = "grafico_aula.png"
-    fig, _ = mpf.plot(
-        df_recorte, type='candle', style=s, addplot=add_plots,
-        title=f"\n XAU/USD SPOT (M15) [{sinal}]",
-        hlines=dict(hlines=linhas_h, colors=cores_linhas, linestyle='-.', linewidths=1.2),
-        figsize=(11, 6.5), returnfig=True
+    
+    fig, axes = mpf.plot(
+        df_recorte,
+        type='candle',
+        style=style_custom,
+        addplot=add_plots,
+        title=dict(title=f"  XAU/USD SPOT (M15)  |  {sinal}", color='#ffffff', fontsize=12, weight='bold'),
+        hlines=dict(hlines=linhas_h, colors=cores_linhas, linestyle='--', linewidths=1.2),
+        figsize=(10, 5.5),
+        datetime_format='%H:%M',
+        xrotation=0,
+        returnfig=True
     )
-    fig.savefig(caminho_imagem, bbox_inches='tight', dpi=180)
+
+    # Ajustes finais no título e layout
+    axes[0].set_ylabel('Preço (USD)', color='#8b949e', fontsize=9)
+    axes[0].tick_params(colors='#8b949e')
+    
+    fig.savefig(caminho_imagem, bbox_inches='tight', dpi=200, facecolor='#0d1117')
     plt.close(fig)
 
-    legenda = f"📊 *ESTUDO TÉCNICO - XAU/USD (M15)*\n\n💵 *Preço Spot:* ${preco_atual:.2f}\n🎯 *Sinal:* {sinal}\n\n{explicacao}"
+    legenda = (
+        f"📊 *ESTUDO TÉCNICO - XAU/USD (M15)*\n\n"
+        f"💵 *Preço Spot:* ${preco_atual:.2f}\n"
+        f"🎯 *Sinal:* {sinal}\n\n"
+        f"{explicacao}"
+    )
     
     url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     with open(caminho_imagem, 'rb') as foto:
