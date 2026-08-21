@@ -84,7 +84,7 @@ def executar_analise_e_envio():
             f"💡 *Leitura:* Mercado em acumulação sem tendência definida."
         )
 
-    # Estilo Dark Mode / TradingView
+    # Estilo Dark personalizado sem base predefinida
     mc = mpf.make_marketcolors(
         up='#00e676', down='#ff5252',
         edge={'up': '#00e676', 'down': '#ff5252'},
@@ -93,7 +93,6 @@ def executar_analise_e_envio():
     )
     
     style_custom = mpf.make_mpf_style(
-        base_mpf_style='charcoal',
         marketcolors=mc,
         facecolor='#121824',
         edgecolor='#1f293d',
@@ -167,7 +166,6 @@ def loop_monitoramento():
         except Exception as e:
             print(f"❌ Erro na análise automática: {e}")
         
-        # Envia atualização contínua a cada 5 minutos
         print("-> Aguardando 5 minutos para o próximo ciclo...")
         time.sleep(300)
 
