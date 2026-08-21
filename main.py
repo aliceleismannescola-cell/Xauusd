@@ -17,7 +17,7 @@ CHAT_ID = "@xaubotMTE"
 
 @app.route('/')
 def home():
-    return "Robô Didático XAU/USD Spot rodando! Monitorando mercado continuamente."
+    return "Robô Didático XAU/USD Spot com SMC (BOS/CHoCH) rodando!"
 
 def calcular_rsi(data, window=14):
     delta = data.diff()
@@ -26,8 +26,40 @@ def calcular_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+def identificar_smc(df):
+    """Mapeia Swing Highs, Swing Lows, BOS e CHoCH"""
+    highs = df['High'].values
+    lows = df['Low'].values
+    closes = df['Close'].values
+    
+    swing_highs = []
+    swing_lows = []
+    
+    # Rastrear pivôs de topo e fundo (janela de 3 candles)
+    for i in range(2, len(df) - 2):
+        if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+            swing_highs.append((i, highs[i]))
+        if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+            swing_lows.append((i, lows[i]))
+            
+    ultimo_topo = swing_highs[-1][1] if swing_highs else highs.max()
+    ultimo_fundo = swing_lows[-1][1] if swing_lows else lows.min()
+    
+    preco_atual = closes[-1]
+    preco_anterior = closes[-2]
+    
+    evento_smc = "ESTRUTURA NORMAL"
+    
+    # Detecção de Rompimentos
+    if preco_anterior <= ultimo_topo and preco_atual > ultimo_topo:
+        evento_smc = "BOS ALTA"  # Rompeu topo a favor da alta
+    elif preco_anterior >= ultimo_fundo and preco_atual < ultimo_fundo:
+        evento_smc = "CHoCH BAIXA" # Rompeu fundo principal (Reversão)
+        
+    return ultimo_topo, ultimo_fundo, evento_smc
+
 def executar_analise_e_envio():
-    print("-> Iniciando análise de mercado XAU/USD...")
+    print("-> Iniciando análise de mercado XAU/USD (SMC + IFR)...")
     
     url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -56,14 +88,13 @@ def executar_analise_e_envio():
     df_recorte['EMA21'] = df_recorte['Close'].ewm(span=21, adjust=False).mean()
     df_recorte['RSI'] = calcular_rsi(df_recorte['Close'], window=14)
 
+    topo_smc, fundo_smc, evento_smc = identificar_smc(df_recorte)
+
     preco_atual = float(df_recorte['Close'].iloc[-1])
     ema9_atual = float(df_recorte['EMA9'].iloc[-1])
     ema21_atual = float(df_recorte['EMA21'].iloc[-1])
     rsi_atual = float(df_recorte['RSI'].iloc[-1])
-    resistencia = float(df_recorte['High'].tail(25).max())
-    suporte = float(df_recorte['Low'].tail(25).min())
 
-    # Dados do candle atual para validação de Price Action (Pavios de rejeição)
     c_open = float(df_recorte['Open'].iloc[-1])
     c_high = float(df_recorte['High'].iloc[-1])
     c_low = float(df_recorte['Low'].iloc[-1])
@@ -71,36 +102,45 @@ def executar_analise_e_envio():
     
     corpo = abs(c_close - c_open)
     pavio_superior = c_high - max(c_open, c_close)
-    pavio_inferior = min(c_open, c_close) - c_low
 
-    # Lógica de decisão reforçada com IFR + Filtro de Rejeição por Pavio
-    if preco_atual > ema9_atual and ema9_atual > ema21_atual:
+    # Tomada de Decisão com SMC (BOS/CHoCH) + IFR + Pavios
+    if evento_smc == "CHoCH BAIXA":
+        sinal = "⚪ NEUTRO (CHoCH DETECTADO)"
+        explicacao = (
+            f"🎓 *MUDANÇA DE CARÁTER (CHoCH)*\n\n"
+            f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+            f"🔻 *Fundo Rompido:* ${fundo_smc:.2f}\n\n"
+            f"⚠️ *Leitura:* O mercado perdeu o fundo estrutural. A tendência de alta acabou e uma reversão para queda foi confirmada. Entrada bloqueada!"
+        )
+    elif preco_atual > ema9_atual and ema9_atual > ema21_atual:
         if rsi_atual > 70:
             sinal = "⚪ NEUTRO (SOBRECOMPRADO)"
             explicacao = (
                 f"🎓 *ALERTA DE TOPO / SOBRECOMPRA*\n\n"
                 f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
                 f"⚠️ *IFR (RSI):* {rsi_atual:.1f} (Acima de 70)\n\n"
-                f"💡 *Leitura:* As médias indicam alta, mas o preço está esticado. Risco de correção imediata! Entrada bloqueada."
+                f"💡 *Leitura:* Preço esticado no topo. Risco de correção! Entrada bloqueada."
             )
         elif pavio_superior > (corpo * 1.5) and pavio_superior > 1.2:
             sinal = "⚪ NEUTRO (REJEIÇÃO NO TOPO)"
             explicacao = (
-                f"🎓 *ALERTA DE FALSO ROMPIMENTO / REJEIÇÃO*\n\n"
+                f"🎓 *ALERTA DE REJEIÇÃO VENDEDORA*\n\n"
                 f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
                 f"⚠️ *Pavio Superior:* ${pavio_superior:.2f}\n\n"
-                f"💡 *Leitura:* O preço tentou subir, mas deixou um forte pavio de rejeição vendedora no topo. Risco de queda! Entrada bloqueada."
+                f"💡 *Leitura:* Rejeição no topo do candle. Entrada de compra bloqueada."
             )
         else:
+            status_bos = " (BOS Confirmado 🚀)" if evento_smc == "BOS ALTA" else ""
             sinal = "🟢 COMPRA (ALTA)"
             sl, tp = preco_atual - 3.50, preco_atual + 7.00
             explicacao = (
-                f"🎓 *ANÁLISE DE TENDÊNCIA: ALTA*\n\n"
+                f"🎓 *ANÁLISE SMC / TENDÊNCIA DE ALTA*{status_bos}\n\n"
                 f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
                 f"🎯 *Take Profit (TP):* ${tp:.2f} (+7.00)\n"
                 f"🛡️ *Stop Loss (SL):* ${sl:.2f} (-3.50)\n"
-                f"📊 *IFR (RSI):* {rsi_atual:.1f}\n\n"
-                f"💡 *Leitura:* MME9 e MME21 alinhadas com espaço para subir."
+                f"📊 *IFR (RSI):* {rsi_atual:.1f}\n"
+                f"🏔️ *Topo Estrutural:* ${topo_smc:.2f}\n\n"
+                f"💡 *Leitura:* Estrutura alinhada e compradora."
             )
     elif preco_atual < ema9_atual and ema9_atual < ema21_atual:
         if rsi_atual < 30:
@@ -109,39 +149,32 @@ def executar_analise_e_envio():
                 f"🎓 *ALERTA DE FUNDO / SOBREVENDA*\n\n"
                 f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
                 f"⚠️ *IFR (RSI):* {rsi_atual:.1f} (Abaixo de 30)\n\n"
-                f"💡 *Leitura:* Tendência de baixa, mas o preço já caiu demais. Risco de repique de alta! Entrada bloqueada."
-            )
-        elif pavio_inferior > (corpo * 1.5) and pavio_inferior > 1.2:
-            sinal = "⚪ NEUTRO (REJEIÇÃO NO FUNDO)"
-            explicacao = (
-                f"🎓 *ALERTA DE ABSORÇÃO / REJEIÇÃO*\n\n"
-                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-                f"⚠️ *Pavio Inferior:* ${pavio_inferior:.2f}\n\n"
-                f"💡 *Leitura:* O preço tentou cair, mas deixou um pavio de absorção compradora no fundo. Risco de alta! Entrada bloqueada."
+                f"💡 *Leitura:* Preço muito esticado na queda. Risco de repique! Entrada bloqueada."
             )
         else:
             sinal = "🔴 VENDA (BAIXA)"
             sl, tp = preco_atual + 3.50, preco_atual - 7.00
             explicacao = (
-                f"🎓 *ANÁLISE DE TENDÊNCIA: BAIXA*\n\n"
+                f"🎓 *ANÁLISE SMC / TENDÊNCIA DE BAIXA*\n\n"
                 f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
                 f"🎯 *Take Profit (TP):* ${tp:.2f} (-7.00)\n"
                 f"🛡️ *Stop Loss (SL):* ${sl:.2f} (+3.50)\n"
-                f"📊 *IFR (RSI):* {rsi_atual:.1f}\n\n"
-                f"💡 *Leitura:* MME9 e MME21 alinhadas com espaço para cair."
+                f"📊 *IFR (RSI):* {rsi_atual:.1f}\n"
+                f"📉 *Fundo Estrutural:* ${fundo_smc:.2f}\n\n"
+                f"💡 *Leitura:* Estrutura vendedora com fluxo de queda."
             )
     else:
         sinal = "⚪ NEUTRO (CONSOLIDAÇÃO)"
         explicacao = (
             f"🎓 *ANÁLISE DE LATERALIZAÇÃO*\n\n"
             f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-            f"🔴 *Resistência:* ${resistencia:.2f}\n"
-            f"🟢 *Suporte:* ${suporte:.2f}\n"
+            f"🔴 *Topo SMC:* ${topo_smc:.2f}\n"
+            f"🟢 *Fundo SMC:* ${fundo_smc:.2f}\n"
             f"📊 *IFR (RSI):* {rsi_atual:.1f}\n\n"
-            f"💡 *Leitura:* Mercado sem tendência clara no momento."
+            f"💡 *Leitura:* Mercado consolidado entre as estruturas."
         )
 
-    # Visual Dark Mode
+    # Gráfico Dark Mode com Linhas de BOS / CHoCH
     mc = mpf.make_marketcolors(
         up='#00e676', down='#ff5252',
         edge={'up': '#00e676', 'down': '#ff5252'},
@@ -165,8 +198,8 @@ def executar_analise_e_envio():
     ]
 
     df_plot = df_recorte.tail(45)
-    linhas_h = [preco_atual, preco_atual+7.0, preco_atual-3.5] if "COMPRA" in sinal or "VENDA" in sinal else [resistencia, suporte]
-    cores_linhas = ['#ffd600', '#00e676', '#ff5252'] if "COMPRA" in sinal or "VENDA" in sinal else ['#ff9100', '#00e676']
+    linhas_h = [topo_smc, fundo_smc]
+    cores_linhas = ['#ff1744', '#00e676']  # Linha vermelha no topo SMC, verde no fundo SMC
 
     caminho_imagem = "grafico_aula.png"
     
@@ -175,8 +208,8 @@ def executar_analise_e_envio():
         type='candle',
         style=style_custom,
         addplot=add_plots,
-        title=dict(title=f"  XAU/USD SPOT (M15)  |  {sinal}", color='#ffffff', fontsize=12, weight='bold'),
-        hlines=dict(hlines=linhas_h, colors=cores_linhas, linestyle='--', linewidths=1.2),
+        title=dict(title=f"  XAU/USD SPOT (M15)  |  SMC: {evento_smc}", color='#ffffff', fontsize=11, weight='bold'),
+        hlines=dict(hlines=linhas_h, colors=cores_linhas, linestyle=':', linewidths=1.5),
         figsize=(10, 5.5),
         datetime_format='%H:%M',
         xrotation=0,
@@ -190,13 +223,13 @@ def executar_analise_e_envio():
     plt.close(fig)
 
     legenda = (
-        f"📊 *ESTUDO TÉCNICO - XAU/USD (M15)*\n\n"
+        f"📊 *ESTUDO TÉCNICO SMC - XAU/USD (M15)*\n\n"
         f"💵 *Preço Spot:* ${preco_atual:.2f}\n"
         f"🎯 *Sinal:* {sinal}\n\n"
         f"{explicacao}"
     )
     
-    print("-> Enviando gráfico e análise para o Telegram...")
+    print("-> Enviando gráfico com análise SMC para o Telegram...")
     url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     with open(caminho_imagem, 'rb') as foto:
         res_tg = requests.post(url_tg, data={'chat_id': CHAT_ID, 'caption': legenda, 'parse_mode': 'Markdown'}, files={'photo': foto}, timeout=30)
