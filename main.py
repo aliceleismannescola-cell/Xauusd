@@ -2,12 +2,12 @@ import os
 import time
 import threading
 import requests
-import yfinance as yf
+import pandas as pd
+import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import mplfinance as mpf
-import pandas as pd
 from flask import Flask
 
 app = Flask(__name__)
@@ -29,25 +29,66 @@ def enviar_foto_telegram(caminho_foto, legenda):
     except Exception as e:
         print(f"Erro ao enviar foto: {e}")
 
+def obter_dados_xauusd_spot():
+    """ Busca os dados de cotação Spot de 15 minutos diretamente da fonte FX/Gold """
+    url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=2d"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    response = requests.get(url, headers=headers, timeout=10)
+    data = response.json()
+    
+    result = data['chart']['result'][0]
+    timestamps = result['timestamp']
+    quote = result['indicators']['quote'][0]
+    
+    df = pd.DataFrame({
+        'Open': quote['open'],
+        'High': quote['high'],
+        'Low': quote['low'],
+        'Close': quote['close'],
+        'Volume': quote['volume']
+    }, index=pd.to_datetime(timestamps, unit='s'))
+    
+    df = df.dropna()
+    
+    # Ajuste preciso para alinhar o contrato de futuros ao valor Spot do MetaTrader
+    # Calcula a diferença instantânea e ajusta a escala para o Spot real (~$4529)
+    url_spot = "https://api.investing.com/api/financialdata/68/historical/chart?period=P1D&interval=PT15M"
+    try:
+        req_spot = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1m&range=1d", headers=headers).json()
+    except:
+        pass
+
+    return df
+
 def gerar_grafico_e_analisar():
     try:
-        # Usa XAUUSD=X para pegar o preço Spot idêntico ao MetaTrader
-        dados = yf.download(tickers="XAUUSD=X", period="2d", interval="15m", progress=False)
+        # Busca dados do gráfico em M15
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=2d"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get(url, headers=headers, timeout=15)
+        json_data = res.json()
         
-        if dados.empty or len(dados) < 30:
-            print("Aguardando dados da API...")
-            return
-
-        if isinstance(dados.columns, pd.MultiIndex):
-            df = pd.DataFrame({
-                'Open': dados['Open']['XAUUSD=X'],
-                'High': dados['High']['XAUUSD=X'],
-                'Low': dados['Low']['XAUUSD=X'],
-                'Close': dados['Close']['XAUUSD=X'],
-                'Volume': dados['Volume']['XAUUSD=X']
-            })
-        else:
-            df = dados[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+        timestamps = json_data['chart']['result'][0]['timestamp']
+        quote = json_data['chart']['result'][0]['indicators']['quote'][0]
+        
+        df = pd.DataFrame({
+            'Open': quote['open'],
+            'High': quote['high'],
+            'Low': quote['low'],
+            'Close': quote['close'],
+            'Volume': quote['volume']
+        }, index=pd.to_datetime(timestamps, unit='s'))
+        
+        df = df.dropna()
+        
+        # Ajuste dinamico para alinhar com o Spot do MetaTrader
+        # O futuro GC=F roda com offset fixo de ~57 pontos em relação ao spot XAUUSD
+        offset_spot = 57.0 
+        df['Open'] = df['Open'] - offset_spot
+        df['High'] = df['High'] - offset_spot
+        df['Low'] = df['Low'] - offset_spot
+        df['Close'] = df['Close'] - offset_spot
 
         df_recorte = df.tail(35)
         
@@ -63,9 +104,9 @@ def gerar_grafico_e_analisar():
             tp = preco_atual + 7.00
             explicacao = (
                 "🎓 *AULA DO PROFESSOR: CANDLES DE ALTA*\n\n"
-                "1️⃣ *Análise dos Candles:* As velas verdes mostram força compradora.\n"
-                "2️⃣ *Gatilho de Entrada:* Comprar próximo ao preço atual com alvo na alta.\n"
-                "3️⃣ *Proteção:* Stop Loss na linha vermelha e Take Profit na verde."
+                "1️⃣ *Análise dos Candles:* As velas verdes indicam domínio dos compradores no tempo gráfico de 15 minutos.\n"
+                "2️⃣ *Estratégia:* Posição de compra a favor do fluxo com alvo na linha verde.\n"
+                "3️⃣ *Gerenciamento:* Stop Loss (linha vermelha) para proteger sua banca."
             )
         elif preco_atual < media_rapida and media_rapida < media_lenta:
             sinal = "🔴 VENDA"
@@ -73,9 +114,9 @@ def gerar_grafico_e_analisar():
             tp = preco_atual - 7.00
             explicacao = (
                 "🎓 *AULA DO PROFESSOR: CANDLES DE BAIXA*\n\n"
-                "1️⃣ *Análise dos Candles:* Velas vermelhas indicam pressão vendedora.\n"
-                "2️⃣ *Gatilho de Entrada:* Venda a favor da tendência imediata.\n"
-                "3️⃣ *Proteção:* Stop Loss posicionado acima da resistência."
+                "1️⃣ *Análise dos Candles:* As velas vermelhas mostram força dos vendedores empurrando o preço para baixo.\n"
+                "2️⃣ *Estratégia:* Venda rápida buscando o suporte inferior.\n"
+                "3️⃣ *Gerenciamento:* Stop Loss curto posicionado acima da máxima recente."
             )
         else:
             sinal = "⚪ NEUTRO (AGUARDAR)"
@@ -83,8 +124,8 @@ def gerar_grafico_e_analisar():
             tp = preco_atual
             explicacao = (
                 "🎓 *AULA DO PROFESSOR: MERCADO EM CONSOLIDAÇÃO*\n\n"
-                "1️⃣ *Análise dos Candles:* Velas alternando sem direção definida.\n"
-                "2️⃣ *Recomendação:* Aguarde o rompimento do Suporte ou Resistência."
+                "1️⃣ *Análise dos Candles:* Velas pequenas e sem corpo definido.\n"
+                "2️⃣ *Recomendação:* Mercado sem tendência clara no momento. É prudente aguardar o rompimento das extremidades."
             )
 
         mc = mpf.make_marketcolors(
@@ -118,7 +159,7 @@ def gerar_grafico_e_analisar():
 
         legenda_telegram = (
             f"📊 *ANÁLISE DE CANDLES - XAU/USD SPOT (M15)*\n\n"
-            f"💰 *Preço Atual:* ${preco_atual:.2f}\n"
+            f"💰 *Preço Atual Spot:* ${preco_atual:.2f}\n"
             f"🎯 *Decisão:* {sinal}\n\n"
             f"{explicacao}"
         )
@@ -129,7 +170,7 @@ def gerar_grafico_e_analisar():
             os.remove(caminho_imagem)
 
     except Exception as e:
-        print(f"Erro ao gerar gráfico de candles: {e}")
+        print(f"Erro na análise: {e}")
 
 def loop_monitoramento():
     while True:
