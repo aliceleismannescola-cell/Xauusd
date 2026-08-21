@@ -12,21 +12,25 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "SEU_TOKEN_AQUI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "SEU_CHAT_ID_AQUI")
 
 def obter_dados_xauusd():
-    """Busca os dados do Ouro Spot (XAUUSD=X) via yfinance"""
-    try:
-        # XAUUSD=X representa o preço spot do Ouro em Dólares
-        ticker = yf.Ticker("XAUUSD=X")
-        df = ticker.history(period="5d", interval="15m")
-        
-        if df is None or df.empty:
-            return None
-        
-        # Padronização de colunas
-        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-        return df
-    except Exception as e:
-        print(f"Erro ao buscar dados do Spot Gold: {e}")
-        return None
+    """Busca os dados do Ouro com suporte a fallback de tickers para evitar erros no Render"""
+    tickers = ["GC=F", "XAUUSD=X"]
+    
+    for symbol in tickers:
+        try:
+            df = yf.download(tickers=symbol, period="5d", interval="15m", progress=False)
+            
+            if df is not None and not df.empty and len(df) >= 30:
+                # Trata a estrutura de colunas do yfinance
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                
+                df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+                return df
+        except Exception as e:
+            print(f"Erro ao buscar no ticker {symbol}: {e}")
+            continue
+            
+    return None
 
 def calcular_rsi(df, period=14):
     """Calcula o IFR / RSI clássico de 14 períodos"""
@@ -63,28 +67,28 @@ def executar_analise_e_envio():
     """Executa a checagem dos 4 critérios de entrada perfeita"""
     df = obter_dados_xauusd()
     if df is None or len(df) < 30:
-        return "Erro ao obter dados atualizados do mercado."
+        return "Erro ao obter dados atualizados do mercado. Tentando no próximo ciclo."
 
     df = calcular_indicadores(df)
     
     # Dados da última vela fechada
     atual = df.iloc[-1]
     
-    preco = round(atual['Close'], 2)
-    rsi = round(atual['RSI'], 2)
-    ema9 = atual['EMA9']
-    ema21 = atual['EMA21']
+    preco = round(float(atual['Close']), 2)
+    rsi = round(float(atual['RSI']), 2)
+    ema9 = float(atual['EMA9'])
+    ema21 = float(atual['EMA21'])
     
     # Identificação de BOS e Rejeição
-    topo_anterior = df['High'].iloc[-15:-2].max()
-    fundo_anterior = df['Low'].iloc[-15:-2].min()
+    topo_anterior = float(df['High'].iloc[-15:-2].max())
+    fundo_anterior = float(df['Low'].iloc[-15:-2].min())
     
-    bos_alta = atual['Close'] > topo_anterior
-    bos_baixa = atual['Close'] < fundo_anterior
+    bos_alta = float(atual['Close']) > topo_anterior
+    bos_baixa = float(atual['Close']) < fundo_anterior
     
-    tamanho_corpo = abs(atual['Close'] - atual['Open'])
-    pavio_superior = atual['High'] - max(atual['Close'], atual['Open'])
-    pavio_inferior = min(atual['Close'], atual['Open']) - atual['Low']
+    tamanho_corpo = abs(float(atual['Close']) - float(atual['Open']))
+    pavio_superior = float(atual['High']) - max(float(atual['Close']), float(atual['Open']))
+    pavio_inferior = min(float(atual['Close']), float(atual['Open'])) - float(atual['Low'])
     
     rejeicao_alta = pavio_superior > (tamanho_corpo * 1.5)
     rejeicao_baixa = pavio_inferior > (tamanho_corpo * 1.5)
@@ -94,20 +98,20 @@ def executar_analise_e_envio():
     # Validação de COMPRA
     if (ema9 > ema21) and (preco > ema9) and (55.0 <= rsi <= 65.0) and bos_alta and not rejeicao_alta:
         sinal = "COMPRA 🟢"
-        sl = round(atual['Low'] - 1.50, 2)
+        sl = round(float(atual['Low']) - 1.50, 2)
         tp = round(preco + ((preco - sl) * 2), 2)
         
     # Validação de VENDA
     elif (ema9 < ema21) and (preco < ema9) and (35.0 <= rsi <= 45.0) and bos_baixa and not rejeicao_baixa:
         sinal = "VENDA 🔴"
-        sl = round(atual['High'] + 1.50, 2)
+        sl = round(float(atual['High']) + 1.50, 2)
         tp = round(preco - ((sl - preco) * 2), 2)
 
     if sinal:
         mensagem = (
             f"🎯 *SINAL CONFIRMADO - XAU/USD (M15)*\n\n"
             f"📍 *Ação:* {sinal}\n"
-            f"💰 *Preço Spot:* ${preco}\n"
+            f"💰 *Preço Atual:* ${preco}\n"
             f"📊 *RSI (14):* {rsi}\n\n"
             f"🛑 *Stop Loss:* ${sl}\n"
             f"🎯 *Take Profit:* ${tp}\n\n"
@@ -117,7 +121,7 @@ def executar_analise_e_envio():
         return f"Sinal de {sinal} enviado para o Telegram com sucesso!"
     
     estado_smc = "BOS ALTA" if bos_alta else ("BOS BAIXA" if bos_baixa else "CONSOLIDAÇÃO")
-    return f"Sem sinal perfeito. Preço Spot: {preco}, RSI: {rsi}, SMC: {estado_smc}"
+    return f"Sem sinal perfeito. Preço: {preco}, RSI: {rsi}, SMC: {estado_smc}"
 
 @app.route('/')
 def home():
