@@ -1,221 +1,135 @@
 import os
-import time
-import threading
 import requests
 import pandas as pd
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import mplfinance as mpf
-from flask import Flask
+from flask import Flask, request
+from tvdatafeed import TvDatafeed, Interval
 
 app = Flask(__name__)
 
-TELEGRAM_TOKEN = "8632537313:AAFjidCR7O7t0ofdoCjvpMJi017gQmTN_8U"
-CHAT_ID = "@xaubotMTE"
+# Configurações do Telegram
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "SEU_TOKEN_AQUI")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "SEU_CHAT_ID_AQUI")
+
+def obter_dados_xauusd():
+    """Busca os dados do Ouro Spot (XAUUSD) via OANDA no TradingView para alinhar com a Exness"""
+    try:
+        tv = TvDatafeed()
+        # Busca os últimos 100 candles de M15 do XAUUSD na OANDA
+        df = tv.get_hist(symbol='XAUUSD', exchange='OANDA', interval=Interval.in_15_minute, n_bars=100)
+        
+        if df is None or df.empty:
+            return None
+        
+        df = df.rename(columns={
+            'open': 'Open',
+            'high': 'High',
+            'low': 'Low',
+            'close': 'Close',
+            'volume': 'Volume'
+        })
+        return df
+    except Exception as e:
+        print(f"Erro ao buscar dados do Spot Gold: {e}")
+        return None
+
+def calcular_rsi(df, period=14):
+    """Calcula o IFR / RSI clássico de 14 períodos"""
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    return df
+
+def calcular_indicadores(df):
+    """Calcula as Médias Móveis EmA 9 e EMA 21"""
+    df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
+    df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df = calcular_rsi(df)
+    return df
+
+def enviar_mensagem_telegram(texto):
+    """Envia o alerta técnico para o canal do Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": texto,
+        "parse_mode": "Markdown"
+    }
+    try:
+        response = requests.post(url, json=payload)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Erro ao enviar mensagem no Telegram: {e}")
+        return False
+
+def executar_analise_e_envio():
+    """Executa a checagem dos 4 critérios de entrada perfeita"""
+    df = obter_dados_xauusd()
+    if df is None or len(df) < 30:
+        return "Erro ao obter dados atualizados do mercado."
+
+    df = calcular_indicadores(df)
+    
+    # Dados da última vela fechada
+    atual = df.iloc[-1]
+    anterior = df.iloc[-2]
+    
+    preco = round(atual['Close'], 2)
+    rsi = round(atual['RSI'], 2)
+    ema9 = atual['EMA9']
+    ema21 = atual['EMA21']
+    
+    # Identificação de BOS e Rejeição
+    topo_anterior = df['High'].iloc[-15:-2].max()
+    fundo_anterior = df['Low'].iloc[-15:-2].min()
+    
+    bos_alta = atual['Close'] > topo_anterior
+    bos_baixa = atual['Close'] < fundo_anterior
+    
+    tamanho_corpo = abs(atual['Close'] - atual['Open'])
+    pavio_superior = atual['High'] - max(atual['Close'], atual['Open'])
+    pavio_inferior = min(atual['Close'], atual['Open']) - atual['Low']
+    
+    rejeicao_alta = pavio_superior > (tamanho_corpo * 1.5)
+    rejeicao_baixa = pavio_inferior > (tamanho_corpo * 1.5)
+    
+    sinal = None
+    
+    # Validação de COMPRA
+    if (ema9 > ema21) and (preco > ema9) and (55.0 <= rsi <= 65.0) and bos_alta and not rejeicao_alta:
+        sinal = "COMPRA 🟢"
+        sl = round(atual['Low'] - 1.50, 2)
+        tp = round(preco + ((preco - sl) * 2), 2)
+        
+    # Validação de VENDA
+    elif (ema9 < ema21) and (preco < ema9) and (35.0 <= rsi <= 45.0) and bos_baixa and not rejeicao_baixa:
+        sinal = "VENDA 🔴"
+        sl = round(atual['High'] + 1.50, 2)
+        tp = round(preco - ((sl - preco) * 2), 2)
+
+    if sinal:
+        mensagem = (
+            f"🎯 *SINAL CONFIRMADO - XAU/USD (M15)*\n\n"
+            f"📍 *Ação:* {sinal}\n"
+            f"💰 *Preço Atual (Exness/Spot):* ${preco}\n"
+            f"📊 *RSI (14):* {rsi}\n\n"
+            f"🛑 *Stop Loss:* ${sl}\n"
+            f"🎯 *Take Profit:* ${tp}\n\n"
+            f"⚠️ _Gerencie seu risco adequadamente._"
+        )
+        enviar_mensagem_telegram(mensagem)
+        return f"Sinal de {sinal} enviado para o Telegram com sucesso!"
+    
+    estado_smc = "BOS ALTA" if bos_alta else ("BOS BAIXA" if bos_baixa else "CONSOLIDAÇÃO")
+    return f"Sem sinal perfeito. Preço Spot: {preco}, RSI: {rsi}, SMC: {estado_smc}"
 
 @app.route('/')
 def home():
-    return "Robô XAU/USD Spot - Mapeamento Estrito SMC + IFR Rodando!"
+    return "Servidor do Robô de Ouro está Online!"
 
-def calcular_rsi(data, window=14):
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
-def identificar_smc(df):
-    """Mapeia Pivôs de Alta e Baixa, BOS e CHoCH"""
-    highs = df['High'].values
-    lows = df['Low'].values
-    closes = df['Close'].values
-    
-    swing_highs = []
-    swing_lows = []
-    
-    for i in range(2, len(df) - 2):
-        if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
-            swing_highs.append((i, highs[i]))
-        if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
-            swing_lows.append((i, lows[i]))
-            
-    ultimo_topo = swing_highs[-1][1] if swing_highs else highs.max()
-    ultimo_fundo = swing_lows[-1][1] if swing_lows else lows.min()
-    
-    preco_atual = closes[-1]
-    preco_anterior = closes[-2]
-    
-    evento_smc = "CONSOLIDAÇÃO"
-    if preco_anterior <= ultimo_topo and preco_atual > ultimo_topo:
-        evento_smc = "BOS ALTA"
-    elif preco_anterior >= ultimo_fundo and preco_atual < ultimo_fundo:
-        evento_smc = "BOS BAIXA"
-        
-    return ultimo_topo, ultimo_fundo, evento_smc
-
-def executar_analise_e_envio():
-    print("-> Analisando filtros estritos para XAU/USD...")
-    
-    url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    res = requests.get(url, headers=headers, timeout=15)
-    json_data = res.json()
-    
-    timestamps = json_data['chart']['result'][0]['timestamp']
-    quote = json_data['chart']['result'][0]['indicators']['quote'][0]
-    
-    df = pd.DataFrame({
-        'Open': quote['open'],
-        'High': quote['high'],
-        'Low': quote['low'],
-        'Close': quote['close'],
-        'Volume': quote['volume']
-    }, index=pd.to_datetime(timestamps, unit='s')).dropna()
-    
-    offset_spot = 57.0 
-    df['Open'] -= offset_spot
-    df['High'] -= offset_spot
-    df['Low'] -= offset_spot
-    df['Close'] -= offset_spot
-
-    df_recorte = df.tail(60).copy()
-    df_recorte['EMA9'] = df_recorte['Close'].ewm(span=9, adjust=False).mean()
-    df_recorte['EMA21'] = df_recorte['Close'].ewm(span=21, adjust=False).mean()
-    df_recorte['RSI'] = calcular_rsi(df_recorte['Close'], window=14)
-
-    topo_smc, fundo_smc, evento_smc = identificar_smc(df_recorte)
-
-    preco_atual = float(df_recorte['Close'].iloc[-1])
-    ema9_atual = float(df_recorte['EMA9'].iloc[-1])
-    ema21_atual = float(df_recorte['EMA21'].iloc[-1])
-    rsi_atual = float(df_recorte['RSI'].iloc[-1])
-
-    c_open = float(df_recorte['Open'].iloc[-1])
-    c_high = float(df_recorte['High'].iloc[-1])
-    c_low = float(df_recorte['Low'].iloc[-1])
-    c_close = float(df_recorte['Close'].iloc[-1])
-    
-    corpo = abs(c_close - c_open)
-    pavio_superior = c_high - max(c_open, c_close)
-    pavio_inferior = min(c_open, c_close) - c_low
-
-    sinal = None
-    explicacao = ""
-
-    # CONDICIONAL ESTRITA DE COMPRA:
-    # 1. Tendência por Médias Móveis
-    # 2. IFR estritamente entre 55 e 65
-    # 3. Confirmação de BOS de Alta
-    # 4. Sem pavio longo de rejeição no topo
-    if preco_atual > ema9_atual and ema9_atual > ema21_atual:
-        if 55.0 <= rsi_atual <= 65.0 and evento_smc == "BOS ALTA":
-            if not (pavio_superior > (corpo * 1.5) and pavio_superior > 1.2):
-                sinal = "🟢 COMPRA CONFIRMADA (SMC + IFR)"
-                sl = preco_atual - 3.50
-                tp = preco_atual + 7.00
-                explicacao = (
-                    f"🎯 *SINAL DE ALTA FIDELIDADE (COMPRA)*\n\n"
-                    f"📌 *Preço Entrada:* ${preco_atual:.2f}\n"
-                    f"🎯 *Take Profit:* ${tp:.2f} (+7.00)\n"
-                    f"🛡️ *Stop Loss:* ${sl:.2f} (-3.50)\n"
-                    f"📊 *IFR (RSI):* {rsi_atual:.1f} (Ideal: 55-65)\n"
-                    f"🏔️ *BOS:* Topo rompido em ${topo_smc:.2f}\n\n"
-                    f"💡 *Confluência:* Tendência + Rompimento Estrutural + Impulso IFR."
-                )
-
-    # CONDICIONAL ESTRITA DE VENDA:
-    # 1. Tendência por Médias Móveis
-    # 2. IFR estritamente entre 35 e 45
-    # 3. Confirmação de BOS de Baixa
-    # 4. Sem pavio longo de absorção no fundo
-    elif preco_atual < ema9_atual and ema9_atual < ema21_atual:
-        if 35.0 <= rsi_atual <= 45.0 and evento_smc == "BOS BAIXA":
-            if not (pavio_inferior > (corpo * 1.5) and pavio_inferior > 1.2):
-                sinal = "🔴 VENDA CONFIRMADA (SMC + IFR)"
-                sl = preco_atual + 3.50
-                tp = preco_atual - 7.00
-                explicacao = (
-                    f"🎯 *SINAL DE ALTA FIDELIDADE (VENDA)*\n\n"
-                    f"📌 *Preço Entrada:* ${preco_atual:.2f}\n"
-                    f"🎯 *Take Profit:* ${tp:.2f} (-7.00)\n"
-                    f"🛡️ *Stop Loss:* ${sl:.2f} (+3.50)\n"
-                    f"📊 *IFR (RSI):* {rsi_atual:.1f} (Ideal: 35-45)\n"
-                    f"📉 *BOS:* Fundo rompido em ${fundo_smc:.2f}\n\n"
-                    f"💡 *Confluência:* Tendência + Rompimento Estrutural + Impulso IFR."
-                )
-
-    # Se não houver alinhamento perfeito de todas as confluências, não envia o sinal no Telegram
-    if sinal is None:
-        print(f"-> Nenhuma confluência perfeita encontrada no momento (Preço: ${preco_atual:.2f} | RSI: {rsi_atual:.1f} | SMC: {evento_smc}). Envio cancelado.")
-        return f"Sem sinal perfeito. Preço: {preco_atual:.2f}, RSI: {rsi_atual:.1f}, SMC: {evento_smc}"
-
-    # Visual do Gráfico
-    mc = mpf.make_marketcolors(
-        up='#00e676', down='#ff5252',
-        edge={'up': '#00e676', 'down': '#ff5252'},
-        wick={'up': '#00e676', 'down': '#ff5252'},
-        volume='in'
-    )
-    
-    style_custom = mpf.make_mpf_style(
-        marketcolors=mc,
-        facecolor='#121824',
-        edgecolor='#1f293d',
-        figcolor='#0d1117',
-        gridcolor='#1f293d',
-        gridstyle='--',
-        rc={'font.family': 'sans-serif', 'font.size': 9}
-    )
-
-    add_plots = [
-        mpf.make_addplot(df_recorte['EMA9'].tail(45), color='#00b0ff', width=1.8),
-        mpf.make_addplot(df_recorte['EMA21'].tail(45), color='#ffd600', width=1.8)
-    ]
-
-    df_plot = df_recorte.tail(45)
-    linhas_h = [preco_atual, preco_atual+7.0, preco_atual-3.5] if "COMPRA" in sinal else [preco_atual, preco_atual-7.0, preco_atual+3.5]
-    cores_linhas = ['#ffd600', '#00e676', '#ff5252']
-
-    caminho_imagem = "grafico_aula.png"
-    
-    fig, axes = mpf.plot(
-        df_plot,
-        type='candle',
-        style=style_custom,
-        addplot=add_plots,
-        title=dict(title=f"  XAU/USD SPOT (M15)  |  SINAL VALIDADO", color='#ffffff', fontsize=11, weight='bold'),
-        hlines=dict(hlines=linhas_h, colors=cores_linhas, linestyle='--', linewidths=1.2),
-        figsize=(10, 5.5),
-        datetime_format='%H:%M',
-        xrotation=0,
-        returnfig=True
-    )
-
-    axes[0].set_ylabel('Preço (USD)', color='#8b949e', fontsize=9)
-    axes[0].tick_params(colors='#8b949e')
-    
-    fig.savefig(caminho_imagem, bbox_inches='tight', dpi=200, facecolor='#0d1117')
-    plt.close(fig)
-
-    legenda = (
-        f"📊 *ESTUDO TÉCNICO - XAU/USD (M15)*\n\n"
-        f"🎯 *Sinal:* {sinal}\n\n"
-        f"{explicacao}"
-    )
-    
-    print("-> Confluência confirmada! Enviando alerta para o Telegram...")
-    url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    with open(caminho_imagem, 'rb') as foto:
-        res_tg = requests.post(url_tg, data={'chat_id': CHAT_ID, 'caption': legenda, 'parse_mode': 'Markdown'}, files={'photo': foto}, timeout=30)
-    
-    if os.path.exists(caminho_imagem):
-        os.remove(caminho_imagem)
-        
-    return res_tg.text
-
-@app.route('/enviar')
+@app.route('/enviar', methods=['GET', 'HEAD'])
 def enviar_manual():
     try:
         resposta = executar_analise_e_envio()
@@ -223,21 +137,6 @@ def enviar_manual():
     except Exception as e:
         return f"<h1>Erro ao Executar:</h1><pre>{str(e)}</pre>"
 
-def loop_monitoramento():
-    print("-> Monitoramento estrito ativado.")
-    time.sleep(5)
-    while True:
-        try:
-            executar_analise_e_envio()
-        except Exception as e:
-            print(f"❌ Erro na execução: {e}")
-        
-        time.sleep(300)
-
 if __name__ == "__main__":
-    t = threading.Thread(target=loop_monitoramento)
-    t.daemon = True
-    t.start()
-    
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
