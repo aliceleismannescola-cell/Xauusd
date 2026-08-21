@@ -199,7 +199,7 @@ def executar_analise_e_envio():
 
     df_plot = df_recorte.tail(45)
     linhas_h = [topo_smc, fundo_smc]
-    cores_linhas = ['#ff1744', '#00e676']  # Linha vermelha no topo SMC, verde no fundo SMC
+    cores_linhas = ['#ff1744', '#00e676']
 
     caminho_imagem = "grafico_aula.png"
     
