@@ -63,7 +63,17 @@ def executar_analise_e_envio():
     resistencia = float(df_recorte['High'].tail(25).max())
     suporte = float(df_recorte['Low'].tail(25).min())
 
-    # Lógica de decisão reforçada com filtro de IFR (RSI)
+    # Dados do candle atual para validação de Price Action (Pavios de rejeição)
+    c_open = float(df_recorte['Open'].iloc[-1])
+    c_high = float(df_recorte['High'].iloc[-1])
+    c_low = float(df_recorte['Low'].iloc[-1])
+    c_close = float(df_recorte['Close'].iloc[-1])
+    
+    corpo = abs(c_close - c_open)
+    pavio_superior = c_high - max(c_open, c_close)
+    pavio_inferior = min(c_open, c_close) - c_low
+
+    # Lógica de decisão reforçada com IFR + Filtro de Rejeição por Pavio
     if preco_atual > ema9_atual and ema9_atual > ema21_atual:
         if rsi_atual > 70:
             sinal = "⚪ NEUTRO (SOBRECOMPRADO)"
@@ -72,6 +82,14 @@ def executar_analise_e_envio():
                 f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
                 f"⚠️ *IFR (RSI):* {rsi_atual:.1f} (Acima de 70)\n\n"
                 f"💡 *Leitura:* As médias indicam alta, mas o preço está esticado. Risco de correção imediata! Entrada bloqueada."
+            )
+        elif pavio_superior > (corpo * 1.5) and pavio_superior > 1.2:
+            sinal = "⚪ NEUTRO (REJEIÇÃO NO TOPO)"
+            explicacao = (
+                f"🎓 *ALERTA DE FALSO ROMPIMENTO / REJEIÇÃO*\n\n"
+                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+                f"⚠️ *Pavio Superior:* ${pavio_superior:.2f}\n\n"
+                f"💡 *Leitura:* O preço tentou subir, mas deixou um forte pavio de rejeição vendedora no topo. Risco de queda! Entrada bloqueada."
             )
         else:
             sinal = "🟢 COMPRA (ALTA)"
@@ -92,6 +110,14 @@ def executar_analise_e_envio():
                 f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
                 f"⚠️ *IFR (RSI):* {rsi_atual:.1f} (Abaixo de 30)\n\n"
                 f"💡 *Leitura:* Tendência de baixa, mas o preço já caiu demais. Risco de repique de alta! Entrada bloqueada."
+            )
+        elif pavio_inferior > (corpo * 1.5) and pavio_inferior > 1.2:
+            sinal = "⚪ NEUTRO (REJEIÇÃO NO FUNDO)"
+            explicacao = (
+                f"🎓 *ALERTA DE ABSORÇÃO / REJEIÇÃO*\n\n"
+                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
+                f"⚠️ *Pavio Inferior:* ${pavio_inferior:.2f}\n\n"
+                f"💡 *Leitura:* O preço tentou cair, mas deixou um pavio de absorção compradora no fundo. Risco de alta! Entrada bloqueada."
             )
         else:
             sinal = "🔴 VENDA (BAIXA)"
