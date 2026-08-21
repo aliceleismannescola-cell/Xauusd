@@ -3,3 +3,4 @@ yfinance
 flask
 matplotlib
 mplfinance
+tvdatafeed
