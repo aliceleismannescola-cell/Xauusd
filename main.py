@@ -15,16 +15,13 @@ app = Flask(__name__)
 TELEGRAM_TOKEN = "8632537313:AAFjidCR7O7t0ofdoCjvpMJi017gQmTN_8U"
 CHAT_ID = "1276043677"
 
-# Variável para armazenar o último sinal enviado e evitar spam
-ultimo_sinal_enviado = None
-
 @app.route('/')
 def home():
-    return "Robô Didático XAU/USD Spot rodando! Monitorando o mercado minuto a minuto."
+    return "Robô Didático XAU/USD Spot rodando! Monitorando mercado continuamente."
 
-def executar_analise_e_envio(forcar_envio=False):
-    global ultimo_sinal_enviado
-
+def executar_analise_e_envio():
+    print("-> Iniciando análise de mercado XAU/USD...")
+    
     url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     res = requests.get(url, headers=headers, timeout=15)
@@ -57,43 +54,37 @@ def executar_analise_e_envio(forcar_envio=False):
     resistencia = float(df_recorte['High'].tail(25).max())
     suporte = float(df_recorte['Low'].tail(25).min())
 
-    # Determinar sinal
     if preco_atual > ema9_atual and ema9_atual > ema21_atual:
         sinal = "🟢 COMPRA (ALTA)"
         sl, tp = preco_atual - 3.50, preco_atual + 7.00
         explicacao = (
-            f"🎓 *OPORTUNIDADE DE COMPRA DECTETADA*\n\n"
+            f"🎓 *ANÁLISE DE TENDÊNCIA: ALTA*\n\n"
             f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
             f"🎯 *Take Profit (TP):* ${tp:.2f} (+7.00)\n"
             f"🛡️ *Stop Loss (SL):* ${sl:.2f} (-3.50)\n\n"
-            f"💡 *Análise:* Estrutura de alta confirmada (EMA9 > EMA21)."
+            f"💡 *Leitura:* MME9 e MME21 alinhadas para compra."
         )
     elif preco_atual < ema9_atual and ema9_atual < ema21_atual:
         sinal = "🔴 VENDA (BAIXA)"
         sl, tp = preco_atual + 3.50, preco_atual - 7.00
         explicacao = (
-            f"🎓 *OPORTUNIDADE DE VENDA DETECTADA*\n\n"
+            f"🎓 *ANÁLISE DE TENDÊNCIA: BAIXA*\n\n"
             f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
             f"🎯 *Take Profit (TP):* ${tp:.2f} (-7.00)\n"
             f"🛡️ *Stop Loss (SL):* ${sl:.2f} (+3.50)\n\n"
-            f"💡 *Análise:* Estrutura de baixa confirmada (EMA9 < EMA21)."
+            f"💡 *Leitura:* MME9 e MME21 alinhadas para venda."
         )
     else:
         sinal = "⚪ NEUTRO (CONSOLIDAÇÃO)"
         explicacao = (
-            f"🎓 *MERCADO EM CONSOLIDAÇÃO*\n\n"
+            f"🎓 *ANÁLISE DE LATERALIZAÇÃO*\n\n"
             f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
             f"🔴 *Resistência:* ${resistencia:.2f}\n"
             f"🟢 *Suporte:* ${suporte:.2f}\n\n"
-            f"💡 *Análise:* O preço está lateralizado. Aguardando definição de tendência."
+            f"💡 *Leitura:* Mercado em acumulação sem tendência definida."
         )
 
-    # Se não for forçado e o sinal for igual ao último enviado, não reenvia para evitar spam
-    if not forcar_envio and sinal == ultimo_sinal_enviado:
-        return "Nenhuma mudança de sinal. Aguardando nova oportunidade."
-
-    ultimo_sinal_enviado = sinal
-
+    # Estilo Dark Mode / TradingView
     mc = mpf.make_marketcolors(
         up='#00e676', down='#ff5252',
         edge={'up': '#00e676', 'down': '#ff5252'},
@@ -148,6 +139,7 @@ def executar_analise_e_envio(forcar_envio=False):
         f"{explicacao}"
     )
     
+    print("-> Enviando gráfico e análise para o Telegram...")
     url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     with open(caminho_imagem, 'rb') as foto:
         res_tg = requests.post(url_tg, data={'chat_id': CHAT_ID, 'caption': legenda, 'parse_mode': 'Markdown'}, files={'photo': foto}, timeout=30)
@@ -155,25 +147,29 @@ def executar_analise_e_envio(forcar_envio=False):
     if os.path.exists(caminho_imagem):
         os.remove(caminho_imagem)
         
+    print(f"-> Resposta do Telegram: {res_tg.status_code}")
     return res_tg.text
 
 @app.route('/enviar')
 def enviar_manual():
     try:
-        resposta = executar_analise_e_envio(forcar_envio=True)
+        resposta = executar_analise_e_envio()
         return f"<h1>Resultado do Envio:</h1><pre>{resposta}</pre>"
     except Exception as e:
         return f"<h1>Erro ao Executar:</h1><pre>{str(e)}</pre>"
 
 def loop_monitoramento():
+    print("-> Thread de monitoramento iniciada. Primeiro disparo em 5 segundos...")
     time.sleep(5)
     while True:
         try:
-            executar_analise_e_envio(forcar_envio=False)
+            executar_analise_e_envio()
         except Exception as e:
-            print(f"Erro no loop automático: {e}")
-        # Checa a cada 60 segundos (1 minuto)
-        time.sleep(60)
+            print(f"❌ Erro na análise automática: {e}")
+        
+        # Envia atualização contínua a cada 5 minutos
+        print("-> Aguardando 5 minutos para o próximo ciclo...")
+        time.sleep(300)
 
 if __name__ == "__main__":
     t = threading.Thread(target=loop_monitoramento)
