@@ -17,7 +17,7 @@ CHAT_ID = "@xaubotMTE"
 
 @app.route('/')
 def home():
-    return "Robô Didático XAU/USD Spot com SMC (BOS/CHoCH) rodando!"
+    return "Robô XAU/USD Spot - Mapeamento Estrito SMC + IFR Rodando!"
 
 def calcular_rsi(data, window=14):
     delta = data.diff()
@@ -27,7 +27,7 @@ def calcular_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def identificar_smc(df):
-    """Mapeia Swing Highs, Swing Lows, BOS e CHoCH"""
+    """Mapeia Pivôs de Alta e Baixa, BOS e CHoCH"""
     highs = df['High'].values
     lows = df['Low'].values
     closes = df['Close'].values
@@ -35,7 +35,6 @@ def identificar_smc(df):
     swing_highs = []
     swing_lows = []
     
-    # Rastrear pivôs de topo e fundo (janela de 3 candles)
     for i in range(2, len(df) - 2):
         if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
             swing_highs.append((i, highs[i]))
@@ -48,18 +47,16 @@ def identificar_smc(df):
     preco_atual = closes[-1]
     preco_anterior = closes[-2]
     
-    evento_smc = "ESTRUTURA NORMAL"
-    
-    # Detecção de Rompimentos
+    evento_smc = "CONSOLIDAÇÃO"
     if preco_anterior <= ultimo_topo and preco_atual > ultimo_topo:
-        evento_smc = "BOS ALTA"  # Rompeu topo a favor da alta
+        evento_smc = "BOS ALTA"
     elif preco_anterior >= ultimo_fundo and preco_atual < ultimo_fundo:
-        evento_smc = "CHoCH BAIXA" # Rompeu fundo principal (Reversão)
+        evento_smc = "BOS BAIXA"
         
     return ultimo_topo, ultimo_fundo, evento_smc
 
 def executar_analise_e_envio():
-    print("-> Iniciando análise de mercado XAU/USD (SMC + IFR)...")
+    print("-> Analisando filtros estritos para XAU/USD...")
     
     url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -102,79 +99,59 @@ def executar_analise_e_envio():
     
     corpo = abs(c_close - c_open)
     pavio_superior = c_high - max(c_open, c_close)
+    pavio_inferior = min(c_open, c_close) - c_low
 
-    # Tomada de Decisão com SMC (BOS/CHoCH) + IFR + Pavios
-    if evento_smc == "CHoCH BAIXA":
-        sinal = "⚪ NEUTRO (CHoCH DETECTADO)"
-        explicacao = (
-            f"🎓 *MUDANÇA DE CARÁTER (CHoCH)*\n\n"
-            f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-            f"🔻 *Fundo Rompido:* ${fundo_smc:.2f}\n\n"
-            f"⚠️ *Leitura:* O mercado perdeu o fundo estrutural. A tendência de alta acabou e uma reversão para queda foi confirmada. Entrada bloqueada!"
-        )
-    elif preco_atual > ema9_atual and ema9_atual > ema21_atual:
-        if rsi_atual > 70:
-            sinal = "⚪ NEUTRO (SOBRECOMPRADO)"
-            explicacao = (
-                f"🎓 *ALERTA DE TOPO / SOBRECOMPRA*\n\n"
-                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-                f"⚠️ *IFR (RSI):* {rsi_atual:.1f} (Acima de 70)\n\n"
-                f"💡 *Leitura:* Preço esticado no topo. Risco de correção! Entrada bloqueada."
-            )
-        elif pavio_superior > (corpo * 1.5) and pavio_superior > 1.2:
-            sinal = "⚪ NEUTRO (REJEIÇÃO NO TOPO)"
-            explicacao = (
-                f"🎓 *ALERTA DE REJEIÇÃO VENDEDORA*\n\n"
-                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-                f"⚠️ *Pavio Superior:* ${pavio_superior:.2f}\n\n"
-                f"💡 *Leitura:* Rejeição no topo do candle. Entrada de compra bloqueada."
-            )
-        else:
-            status_bos = " (BOS Confirmado 🚀)" if evento_smc == "BOS ALTA" else ""
-            sinal = "🟢 COMPRA (ALTA)"
-            sl, tp = preco_atual - 3.50, preco_atual + 7.00
-            explicacao = (
-                f"🎓 *ANÁLISE SMC / TENDÊNCIA DE ALTA*{status_bos}\n\n"
-                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-                f"🎯 *Take Profit (TP):* ${tp:.2f} (+7.00)\n"
-                f"🛡️ *Stop Loss (SL):* ${sl:.2f} (-3.50)\n"
-                f"📊 *IFR (RSI):* {rsi_atual:.1f}\n"
-                f"🏔️ *Topo Estrutural:* ${topo_smc:.2f}\n\n"
-                f"💡 *Leitura:* Estrutura alinhada e compradora."
-            )
+    sinal = None
+    explicacao = ""
+
+    # CONDICIONAL ESTRITA DE COMPRA:
+    # 1. Tendência por Médias Móveis
+    # 2. IFR estritamente entre 55 e 65
+    # 3. Confirmação de BOS de Alta
+    # 4. Sem pavio longo de rejeição no topo
+    if preco_atual > ema9_atual and ema9_atual > ema21_atual:
+        if 55.0 <= rsi_atual <= 65.0 and evento_smc == "BOS ALTA":
+            if not (pavio_superior > (corpo * 1.5) and pavio_superior > 1.2):
+                sinal = "🟢 COMPRA CONFIRMADA (SMC + IFR)"
+                sl = preco_atual - 3.50
+                tp = preco_atual + 7.00
+                explicacao = (
+                    f"🎯 *SINAL DE ALTA FIDELIDADE (COMPRA)*\n\n"
+                    f"📌 *Preço Entrada:* ${preco_atual:.2f}\n"
+                    f"🎯 *Take Profit:* ${tp:.2f} (+7.00)\n"
+                    f"🛡️ *Stop Loss:* ${sl:.2f} (-3.50)\n"
+                    f"📊 *IFR (RSI):* {rsi_atual:.1f} (Ideal: 55-65)\n"
+                    f"🏔️ *BOS:* Topo rompido em ${topo_smc:.2f}\n\n"
+                    f"💡 *Confluência:* Tendência + Rompimento Estrutural + Impulso IFR."
+                )
+
+    # CONDICIONAL ESTRITA DE VENDA:
+    # 1. Tendência por Médias Móveis
+    # 2. IFR estritamente entre 35 e 45
+    # 3. Confirmação de BOS de Baixa
+    # 4. Sem pavio longo de absorção no fundo
     elif preco_atual < ema9_atual and ema9_atual < ema21_atual:
-        if rsi_atual < 30:
-            sinal = "⚪ NEUTRO (SOBREVENDIDO)"
-            explicacao = (
-                f"🎓 *ALERTA DE FUNDO / SOBREVENDA*\n\n"
-                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-                f"⚠️ *IFR (RSI):* {rsi_atual:.1f} (Abaixo de 30)\n\n"
-                f"💡 *Leitura:* Preço muito esticado na queda. Risco de repique! Entrada bloqueada."
-            )
-        else:
-            sinal = "🔴 VENDA (BAIXA)"
-            sl, tp = preco_atual + 3.50, preco_atual - 7.00
-            explicacao = (
-                f"🎓 *ANÁLISE SMC / TENDÊNCIA DE BAIXA*\n\n"
-                f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-                f"🎯 *Take Profit (TP):* ${tp:.2f} (-7.00)\n"
-                f"🛡️ *Stop Loss (SL):* ${sl:.2f} (+3.50)\n"
-                f"📊 *IFR (RSI):* {rsi_atual:.1f}\n"
-                f"📉 *Fundo Estrutural:* ${fundo_smc:.2f}\n\n"
-                f"💡 *Leitura:* Estrutura vendedora com fluxo de queda."
-            )
-    else:
-        sinal = "⚪ NEUTRO (CONSOLIDAÇÃO)"
-        explicacao = (
-            f"🎓 *ANÁLISE DE LATERALIZAÇÃO*\n\n"
-            f"📌 *Preço Atual:* ${preco_atual:.2f}\n"
-            f"🔴 *Topo SMC:* ${topo_smc:.2f}\n"
-            f"🟢 *Fundo SMC:* ${fundo_smc:.2f}\n"
-            f"📊 *IFR (RSI):* {rsi_atual:.1f}\n\n"
-            f"💡 *Leitura:* Mercado consolidado entre as estruturas."
-        )
+        if 35.0 <= rsi_atual <= 45.0 and evento_smc == "BOS BAIXA":
+            if not (pavio_inferior > (corpo * 1.5) and pavio_inferior > 1.2):
+                sinal = "🔴 VENDA CONFIRMADA (SMC + IFR)"
+                sl = preco_atual + 3.50
+                tp = preco_atual - 7.00
+                explicacao = (
+                    f"🎯 *SINAL DE ALTA FIDELIDADE (VENDA)*\n\n"
+                    f"📌 *Preço Entrada:* ${preco_atual:.2f}\n"
+                    f"🎯 *Take Profit:* ${tp:.2f} (-7.00)\n"
+                    f"🛡️ *Stop Loss:* ${sl:.2f} (+3.50)\n"
+                    f"📊 *IFR (RSI):* {rsi_atual:.1f} (Ideal: 35-45)\n"
+                    f"📉 *BOS:* Fundo rompido em ${fundo_smc:.2f}\n\n"
+                    f"💡 *Confluência:* Tendência + Rompimento Estrutural + Impulso IFR."
+                )
 
-    # Gráfico Dark Mode com Linhas de BOS / CHoCH
+    # Se não houver alinhamento perfeito de todas as confluências, não envia o sinal no Telegram
+    if sinal is None:
+        print(f"-> Nenhuma confluência perfeita encontrada no momento (Preço: ${preco_atual:.2f} | RSI: {rsi_atual:.1f} | SMC: {evento_smc}). Envio cancelado.")
+        return f"Sem sinal perfeito. Preço: {preco_atual:.2f}, RSI: {rsi_atual:.1f}, SMC: {evento_smc}"
+
+    # Visual do Gráfico
     mc = mpf.make_marketcolors(
         up='#00e676', down='#ff5252',
         edge={'up': '#00e676', 'down': '#ff5252'},
@@ -198,8 +175,8 @@ def executar_analise_e_envio():
     ]
 
     df_plot = df_recorte.tail(45)
-    linhas_h = [topo_smc, fundo_smc]
-    cores_linhas = ['#ff1744', '#00e676']
+    linhas_h = [preco_atual, preco_atual+7.0, preco_atual-3.5] if "COMPRA" in sinal else [preco_atual, preco_atual-7.0, preco_atual+3.5]
+    cores_linhas = ['#ffd600', '#00e676', '#ff5252']
 
     caminho_imagem = "grafico_aula.png"
     
@@ -208,8 +185,8 @@ def executar_analise_e_envio():
         type='candle',
         style=style_custom,
         addplot=add_plots,
-        title=dict(title=f"  XAU/USD SPOT (M15)  |  SMC: {evento_smc}", color='#ffffff', fontsize=11, weight='bold'),
-        hlines=dict(hlines=linhas_h, colors=cores_linhas, linestyle=':', linewidths=1.5),
+        title=dict(title=f"  XAU/USD SPOT (M15)  |  SINAL VALIDADO", color='#ffffff', fontsize=11, weight='bold'),
+        hlines=dict(hlines=linhas_h, colors=cores_linhas, linestyle='--', linewidths=1.2),
         figsize=(10, 5.5),
         datetime_format='%H:%M',
         xrotation=0,
@@ -223,13 +200,12 @@ def executar_analise_e_envio():
     plt.close(fig)
 
     legenda = (
-        f"📊 *ESTUDO TÉCNICO SMC - XAU/USD (M15)*\n\n"
-        f"💵 *Preço Spot:* ${preco_atual:.2f}\n"
+        f"📊 *ESTUDO TÉCNICO - XAU/USD (M15)*\n\n"
         f"🎯 *Sinal:* {sinal}\n\n"
         f"{explicacao}"
     )
     
-    print("-> Enviando gráfico com análise SMC para o Telegram...")
+    print("-> Confluência confirmada! Enviando alerta para o Telegram...")
     url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     with open(caminho_imagem, 'rb') as foto:
         res_tg = requests.post(url_tg, data={'chat_id': CHAT_ID, 'caption': legenda, 'parse_mode': 'Markdown'}, files={'photo': foto}, timeout=30)
@@ -237,27 +213,25 @@ def executar_analise_e_envio():
     if os.path.exists(caminho_imagem):
         os.remove(caminho_imagem)
         
-    print(f"-> Resposta do Telegram: {res_tg.status_code}")
     return res_tg.text
 
 @app.route('/enviar')
 def enviar_manual():
     try:
         resposta = executar_analise_e_envio()
-        return f"<h1>Resultado do Envio:</h1><pre>{resposta}</pre>"
+        return f"<h1>Resultado da Análise:</h1><pre>{resposta}</pre>"
     except Exception as e:
         return f"<h1>Erro ao Executar:</h1><pre>{str(e)}</pre>"
 
 def loop_monitoramento():
-    print("-> Thread de monitoramento iniciada. Primeiro disparo em 5 segundos...")
+    print("-> Monitoramento estrito ativado.")
     time.sleep(5)
     while True:
         try:
             executar_analise_e_envio()
         except Exception as e:
-            print(f"❌ Erro na análise automática: {e}")
+            print(f"❌ Erro na execução: {e}")
         
-        print("-> Aguardando 5 minutos para o próximo ciclo...")
         time.sleep(300)
 
 if __name__ == "__main__":
